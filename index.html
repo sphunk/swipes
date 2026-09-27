@@ -91,6 +91,18 @@ tfoot td{font-weight:800;border-top:2px solid var(--line);border-bottom:0}
 td.like{color:var(--like)} td.super{color:var(--super)}
 .empty{padding:22px;color:var(--muted);text-align:center}
 
+.statusbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.status.ok{color:var(--like)} .status.err{color:var(--super)}
+dialog{border:1px solid var(--line);border-radius:16px;background:var(--surface);color:var(--ink);padding:24px;max-width:460px;width:calc(100% - 32px)}
+dialog::backdrop{background:rgba(10,12,30,.45)}
+dialog h2{margin-bottom:6px}
+dialog p{color:var(--muted);font-size:.9rem;margin:0 0 16px}
+dialog label{display:block;font-size:.88rem;font-weight:600;margin:12px 0 4px}
+dialog input{width:100%;font:inherit;font-size:.95rem;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:10px;padding:9px 12px}
+dialog input:focus-visible{outline:3px solid var(--like);outline-offset:1px}
+.dlg-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:20px}
+.btn.primary{background:var(--like);border-color:var(--like);color:#fff}
+.dlg-msg{font-size:.88rem;margin-top:12px;min-height:1.2em}
 @media (max-width:640px){
   .tally{grid-template-columns:1fr 1fr}
   .cell.swipe{grid-column:1 / -1;border-bottom:1px solid var(--line)}
@@ -109,7 +121,10 @@ td.like{color:var(--like)} td.super{color:var(--super)}
       <h1>Swipe-Zähler</h1>
       <div class="today" id="todayLabel"></div>
     </div>
-    <div class="status" id="status">Speicher wird geladen …</div>
+    <div class="statusbox">
+      <div class="status" id="status">Nur in diesem Browser gespeichert</div>
+      <button class="btn" id="syncBtn">Sync einrichten</button>
+    </div>
   </header>
 
   <div class="tally" aria-live="polite">
@@ -159,12 +174,32 @@ td.like{color:var(--like)} td.super{color:var(--super)}
   </section>
 </main>
 
+<dialog id="syncDlg">
+  <h2>Mit GitHub synchronisieren</h2>
+  <p id="dlgIntro">Einmal den Token einfügen, danach kannst du dir einen Link für deine anderen Geräte kopieren. Dort ist dann nichts mehr einzurichten.</p>
+  <div id="repoFields">
+    <label for="ghOwner">GitHub-Benutzername</label>
+    <input id="ghOwner" autocomplete="off" spellcheck="false">
+    <label for="ghRepo">Repo</label>
+    <input id="ghRepo" autocomplete="off" spellcheck="false">
+  </div>
+  <label for="ghToken">Token</label>
+  <input id="ghToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+  <div class="dlg-msg" id="dlgMsg"></div>
+  <div class="dlg-actions">
+    <button class="btn danger" id="ghDisconnect">Sync trennen</button>
+    <button class="btn" id="ghShare">Link für andere Geräte kopieren</button>
+    <button class="btn" id="ghCancel">Schließen</button>
+    <button class="btn primary" id="ghConnect">Verbinden</button>
+  </div>
+</dialog>
+
 <script>
 (function(){
   const LS_KEY = "swipe-zaehler-v1";
   let state = { days: {} };
   let undoStack = [];
-  let db = null, docRef = null, saveTimer = null;
+  let saveTimer = null;
 
   const $ = id => document.getElementById(id);
 
@@ -187,7 +222,7 @@ td.like{color:var(--like)} td.super{color:var(--super)}
   function pct(a,b){ return b > 0 ? (a/b*100).toFixed(1).replace(".", ",") + " %" : "–"; }
   function today(){
     const k = dayKey();
-    if (!state.days[k]) state.days[k] = { swipes:0, likes:0, supers:0 };
+    if (!state.days[k]) state.days[k] = { swipes:0, likes:0, supers:0, t:0 };
     return state.days[k];
   }
   function clean(o){
@@ -195,19 +230,21 @@ td.like{color:var(--like)} td.super{color:var(--super)}
     if (o && o.days && typeof o.days === "object"){
       for (const [k,v] of Object.entries(o.days)){
         if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !v) continue;
-        out.days[k] = { swipes: +v.swipes||0, likes: +v.likes||0, supers: +v.supers||0 };
+        out.days[k] = { swipes: +v.swipes||0, likes: +v.likes||0, supers: +v.supers||0, t: +v.t||0 };
       }
     }
     return out;
   }
-  function mergeMax(a,b){
+  // Pro Tag gewinnt der zuletzt geänderte Stand (Zeitstempel t). So funktionieren auch Rückgängig und Reset geräteübergreifend.
+  function merge(a,b){
     const out = { days: { ...a.days } };
     for (const [k,v] of Object.entries(b.days)){
-      const c = out.days[k] || { swipes:0, likes:0, supers:0 };
-      out.days[k] = { swipes: Math.max(c.swipes,v.swipes), likes: Math.max(c.likes,v.likes), supers: Math.max(c.supers,v.supers) };
+      const c = out.days[k];
+      if (!c || v.t > c.t || (v.t === c.t && v.swipes > c.swipes)) out.days[k] = { ...v };
     }
     return out;
   }
+  function touch(k){ if (state.days[k]) state.days[k].t = Date.now(); }
 
   /* ---------- persistence ---------- */
   function saveLocal(){
@@ -217,37 +254,156 @@ td.like{color:var(--like)} td.super{color:var(--super)}
     try { const raw = localStorage.getItem(LS_KEY); if (raw) return clean(JSON.parse(raw)); } catch(e){}
     return { days:{} };
   }
-  function scheduleRemote(){
-    if (!docRef) return;
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(async () => {
-      try { await docRef.set({ days: state.days }); setStatus("Im Konto gespeichert"); }
-      catch(e){ setStatus("Nur in diesem Browser gespeichert"); }
-    }, 700);
-  }
-  function persist(){ saveLocal(); scheduleRemote(); }
-  function setStatus(t){ $("status").textContent = t; }
+  /* ---------- GitHub-Sync ---------- */
+  const GH_KEY = "swipe-zaehler-github";
+  const GH_FILE = "swipe-stats.json";
+  const GH_BRANCH = "daten";   // eigener Branch, damit Speichern keine Pages-Neuveröffentlichung auslöst
+  let branchReady = false;
 
-  async function connectDb(){
+  // Benutzername und Repo aus der github.io-Adresse ablesen
+  function detectRepo(){
+    const m = location.hostname.match(/^([a-z0-9-]+)\.github\.io$/i);
+    if (!m) return null;
+    const first = location.pathname.split("/").filter(Boolean)[0];
+    const repo = first && !/\.html?$/i.test(first) ? first : location.hostname;
+    return { owner: m[1], repo };
+  }
+  const detected = detectRepo();
+  let gh = null;            // {owner, repo, token}
+  let dirty = false, syncing = false;
+
+  function loadGh(){ try { const g = JSON.parse(localStorage.getItem(GH_KEY)); if (g && g.owner && g.repo && g.token) return g; } catch(e){} return null; }
+  function repoApi(g){ return `https://api.github.com/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.repo)}`; }
+  function ghUrl(g){ return `${repoApi(g)}/contents/${GH_FILE}`; }
+  async function ensureBranch(g){
+    if (branchReady) return;
+    const h = ghHeaders(g);
+    let r = await fetch(`${repoApi(g)}/git/ref/heads/${GH_BRANCH}`, { headers: h, cache: "no-store" });
+    if (r.status === 404){
+      const repo = await fetch(repoApi(g), { headers: h, cache: "no-store" });
+      if (!repo.ok) throw { status: repo.status };
+      const def = (await repo.json()).default_branch;
+      const ref = await fetch(`${repoApi(g)}/git/ref/heads/${encodeURIComponent(def)}`, { headers: h, cache: "no-store" });
+      if (!ref.ok) throw { status: ref.status };
+      const sha = (await ref.json()).object.sha;
+      r = await fetch(`${repoApi(g)}/git/refs`, { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ ref: "refs/heads/" + GH_BRANCH, sha }) });
+      if (!r.ok && r.status !== 422) throw { status: r.status };
+    } else if (!r.ok) throw { status: r.status };
+    branchReady = true;
+  }
+  function ghHeaders(g){ return { "Authorization": "Bearer " + g.token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }; }
+  const b64enc = str => btoa(unescape(encodeURIComponent(str)));
+  const b64dec = str => decodeURIComponent(escape(atob(str.replace(/\s/g, ""))));
+
+  async function ghGet(g){
+    const r = await fetch(ghUrl(g) + "?ref=" + GH_BRANCH + "&t=" + Date.now(), { headers: ghHeaders(g), cache: "no-store" });
+    if (r.status === 404) return { data: { days:{} }, sha: null, missing: true };
+    if (!r.ok) throw { status: r.status };
+    const j = await r.json();
+    return { data: clean(JSON.parse(b64dec(j.content))), sha: j.sha };
+  }
+  async function ghPut(g, data, sha){
+    const body = { message: "Swipe-Statistik " + dayKey(), content: b64enc(JSON.stringify(data, null, 1)), branch: GH_BRANCH };
+    if (sha) body.sha = sha;
+    const r = await fetch(ghUrl(g), { method: "PUT", headers: { ...ghHeaders(g), "Content-Type": "application/json" }, body: JSON.stringify(body), keepalive: body.content.length < 60000 });
+    if (!r.ok) throw { status: r.status };
+  }
+  function errText(e){
+    const s = e && e.status;
+    if (s === 401) return "Token ungültig oder abgelaufen";
+    if (s === 403) return "Token hat keine Schreibrechte für das Repo";
+    if (s === 404) return "Repo nicht gefunden oder Token hat keinen Zugriff";
+    if (s === 422) return "GitHub hat die Änderung abgelehnt";
+    return "GitHub gerade nicht erreichbar";
+  }
+  function setStatus(t, cls){ const el = $("status"); el.textContent = t; el.className = "status" + (cls ? " " + cls : ""); }
+
+  // Holt den Stand von GitHub, führt ihn mit dem lokalen zusammen und schreibt zurück, falls nötig.
+  async function sync(push){
+    if (!gh || syncing) { if (push) dirty = true; return; }
+    syncing = true; dirty = false;
     try {
-      if (!window.claude || !window.claude.use) { setStatus("Nur in diesem Browser gespeichert"); return; }
-      const [dbNs, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]);
-      if (!dbNs || !user) { setStatus("Nur in diesem Browser gespeichert"); return; }
-      const uid = await user.id();
-      if (!uid) { setStatus("Nur in diesem Browser gespeichert"); return; }
-      db = dbNs;
-      docRef = db.doc("data/users/" + uid + "/stats");
-      const snap = await docRef.get();
-      if (snap.exists) state = mergeMax(state, clean(snap.data()));
-      render();
-      saveLocal();
-      await docRef.set({ days: state.days });
-      setStatus("Im Konto gespeichert");
+      await ensureBranch(gh);
+      for (let attempt = 0; attempt < 3; attempt++){
+        const remote = await ghGet(gh);
+        const merged = merge(remote.data, state);
+        state = merge(state, merged);
+        saveLocal(); render();
+        const same = JSON.stringify(sortDays(remote.data)) === JSON.stringify(sortDays(merged));
+        if (same && !remote.missing) break;
+        try { await ghPut(gh, sortDays(merged), remote.sha); break; }
+        catch(e){ if (e.status === 409 || e.status === 422) continue; throw e; }
+      }
+      const time = new Date().toLocaleTimeString("de-DE", { hour:"2-digit", minute:"2-digit" });
+      setStatus("Mit GitHub synchronisiert · " + time, "ok");
     } catch(e){
-      docRef = null;
-      setStatus("Nur in diesem Browser gespeichert");
+      dirty = true;
+      setStatus(errText(e) + " · lokal gespeichert", "err");
+    } finally {
+      syncing = false;
+      if (dirty) scheduleRemote();
     }
   }
+  function sortDays(d){ const out = { days:{} }; for (const k of Object.keys(d.days).sort()) out.days[k] = d.days[k]; return out; }
+  function scheduleRemote(){
+    if (!gh) return;
+    dirty = true;
+    clearTimeout(saveTimer);
+    setStatus("Änderungen werden gleich hochgeladen …");
+    saveTimer = setTimeout(() => sync(true), 2500);
+  }
+  function persist(){ saveLocal(); scheduleRemote(); }
+
+  // Beim Zurückkehren zur Seite neuesten Stand holen, beim Verlassen noch offene Änderungen hochladen.
+  document.addEventListener("visibilitychange", () => {
+    if (!gh) return;
+    if (document.visibilityState === "visible") sync(false);
+    else if (dirty) { clearTimeout(saveTimer); sync(true); }
+  });
+
+  /* Dialog */
+  const dlg = $("syncDlg");
+  $("syncBtn").addEventListener("click", () => {
+    const g = gh || detected || {};
+    $("ghOwner").value = g.owner || ""; $("ghRepo").value = g.repo || ""; $("ghToken").value = (gh && gh.token) || "";
+    $("repoFields").style.display = detected ? "none" : "";
+    $("dlgMsg").textContent = "";
+    $("ghDisconnect").style.display = gh ? "" : "none";
+    $("ghShare").style.display = gh ? "" : "none";
+    $("ghConnect").style.display = gh ? "none" : "";
+    dlg.showModal();
+  });
+  $("ghShare").addEventListener("click", async () => {
+    if (!gh) return;
+    const link = location.origin + location.pathname + "#sync=" + b64enc(JSON.stringify(gh));
+    try { await navigator.clipboard.writeText(link); $("dlgMsg").textContent = "Link kopiert. Auf dem anderen Gerät einfach öffnen und als Lesezeichen speichern."; }
+    catch(e){ prompt("Diesen Link auf dem anderen Gerät öffnen:", link); }
+  });
+  $("ghCancel").addEventListener("click", () => dlg.close());
+  $("ghDisconnect").addEventListener("click", () => {
+    try { localStorage.removeItem(GH_KEY); } catch(e){}
+    gh = null; clearTimeout(saveTimer); dlg.close();
+    $("syncBtn").textContent = "Sync einrichten";
+    setStatus("Nur in diesem Browser gespeichert");
+  });
+  $("ghConnect").addEventListener("click", async () => {
+    const g = detected ? { ...detected, token: $("ghToken").value.trim() } : { owner: $("ghOwner").value.trim(), repo: $("ghRepo").value.trim(), token: $("ghToken").value.trim() };
+    const msg = $("dlgMsg");
+    if (!g.owner || !g.repo || !g.token){ msg.textContent = detected ? "Bitte den Token einfügen." : "Bitte alle Felder ausfüllen."; return; }
+    msg.textContent = "Verbindung wird geprüft …";
+    try {
+      const r = await fetch(`https://api.github.com/repos/${encodeURIComponent(g.owner)}/${encodeURIComponent(g.repo)}`, { headers: ghHeaders(g), cache: "no-store" });
+      if (!r.ok) throw { status: r.status };
+      const repo = await r.json();
+      if (repo.permissions && !repo.permissions.push){ msg.textContent = "Token hat keine Schreibrechte für das Repo."; return; }
+    } catch(e){ msg.textContent = errText(e) + "."; return; }
+    gh = g;
+    try { localStorage.setItem(GH_KEY, JSON.stringify(g)); } catch(e){}
+    $("syncBtn").textContent = "Sync-Einstellungen";
+    $("ghConnect").style.display = "none"; $("ghShare").style.display = ""; $("ghDisconnect").style.display = "";
+    msg.textContent = "Verbunden. Kopier dir jetzt den Link für deine anderen Geräte.";
+    sync(true);
+  });
 
   /* ---------- actions ---------- */
   function act(kind){
@@ -255,6 +411,7 @@ td.like{color:var(--like)} td.super{color:var(--super)}
     t.swipes++;
     if (kind === "like") t.likes++;
     if (kind === "super") t.supers++;
+    touch(dayKey());
     undoStack.push({ day: dayKey(), kind });
     if (undoStack.length > 200) undoStack.shift();
     persist();
@@ -268,13 +425,14 @@ td.like{color:var(--like)} td.super{color:var(--super)}
       d.swipes = Math.max(0, d.swipes-1);
       if (last.kind === "like") d.likes = Math.max(0, d.likes-1);
       if (last.kind === "super") d.supers = Math.max(0, d.supers-1);
+      d.t = Date.now();
     }
     persist();
     render();
   }
   function resetToday(){
     if (!confirm("Heutige Zahlen wirklich auf 0 setzen?")) return;
-    state.days[dayKey()] = { swipes:0, likes:0, supers:0 };
+    state.days[dayKey()] = { swipes:0, likes:0, supers:0, t: Date.now() };
     undoStack = undoStack.filter(u => u.day !== dayKey());
     persist();
     render();
@@ -361,7 +519,13 @@ td.like{color:var(--like)} td.super{color:var(--super)}
 
   state = loadLocal();
   render();
-  connectDb();
+  const hm = location.hash.match(/^#sync=(.+)$/);
+  if (hm){
+    try { const g = JSON.parse(b64dec(decodeURIComponent(hm[1]))); if (g.owner && g.repo && g.token) localStorage.setItem(GH_KEY, JSON.stringify(g)); } catch(e){}
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  gh = loadGh();
+  if (gh){ $("syncBtn").textContent = "Sync-Einstellungen"; sync(false); }
 })();
 </script>
 </body>
