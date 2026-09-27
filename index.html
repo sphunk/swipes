@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Swipe-Zähler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+:root{
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  --bg:#EEF0F7; --surface:#FFFFFF; --ink:#1D1F33; --muted:#5E6378; --line:#D5D9E6;
+  --swipe:#5B6275; --like:#3A5BD9; --super:#D93A72;
+  --swipe-soft:#E3E5EC; --like-soft:#DDE4FB; --super-soft:#FBE0EA;
+  --font:"Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#15172A; --surface:#1F2238; --ink:#ECEEF8; --muted:#A0A5BD; --line:#33375A;
+    --swipe:#A6ACC2; --like:#7D98FF; --super:#FF6F9F;
+    --swipe-soft:#2A2E48; --like-soft:#25305E; --super-soft:#4A2238;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15172A; --surface:#1F2238; --ink:#ECEEF8; --muted:#A0A5BD; --line:#33375A;
+  --swipe:#A6ACC2; --like:#7D98FF; --super:#FF6F9F;
+  --swipe-soft:#2A2E48; --like-soft:#25305E; --super-soft:#4A2238;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased}
+main{max-width:880px;margin:0 auto;padding:28px 20px 48px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:22px}
+h1{font-size:1.6rem;font-weight:800;letter-spacing:-.02em;margin:0}
+.today{color:var(--muted);font-size:.95rem}
+.status{font-size:.82rem;color:var(--muted)}
+
+/* Counter display */
+.tally{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:18px;overflow:hidden}
+.cell{padding:20px 22px;border-left:1px solid var(--line)}
+.cell:first-child{border-left:0}
+.cell .n{font-size:clamp(2.6rem,7vw,4.4rem);font-weight:800;line-height:1;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.cell .l{margin-top:8px;font-size:.95rem;color:var(--muted)}
+.cell.swipe .n{color:var(--ink)}
+.cell.like .n{color:var(--like)}
+.cell.super .n{color:var(--super)}
+.bump{animation:bump .22s ease-out}
+@keyframes bump{0%{transform:scale(1)}40%{transform:scale(1.08)}100%{transform:scale(1)}}
+.rates{display:flex;gap:18px;flex-wrap:wrap;margin:12px 4px 0;color:var(--muted);font-size:.92rem}
+.rates b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* Keys */
+.keys{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:22px}
+.key{appearance:none;border:0;cursor:pointer;font:inherit;color:var(--ink);text-align:left;
+  border-radius:16px;padding:22px 20px 18px;min-height:140px;display:flex;flex-direction:column;justify-content:space-between;
+  box-shadow:0 4px 0 0 var(--edge);transform:translateY(0);transition:transform .06s,box-shadow .06s}
+.key:active,.key.pressed{transform:translateY(4px);box-shadow:0 0 0 0 var(--edge)}
+.key:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+.key .t{font-size:1.35rem;font-weight:800;letter-spacing:-.01em}
+.key .d{font-size:.88rem;color:var(--muted);margin-top:4px}
+.key kbd{font:inherit;font-size:.8rem;font-weight:600;border:1.5px solid currentColor;border-radius:6px;padding:1px 7px;align-self:flex-start;opacity:.75}
+.key.swipe{background:var(--swipe-soft);--edge:var(--swipe)}
+.key.like{background:var(--like-soft);--edge:var(--like)}
+.key.like .t,.key.like kbd{color:var(--like)}
+.key.super{background:var(--super-soft);--edge:var(--super)}
+.key.super .t,.key.super kbd{color:var(--super)}
+
+.tools{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;align-items:center}
+.btn{appearance:none;font:inherit;font-size:.92rem;font-weight:600;color:var(--ink);background:transparent;border:1.5px solid var(--line);border-radius:10px;padding:8px 14px;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.danger{color:var(--super)}
+.hint{color:var(--muted);font-size:.85rem;margin-left:auto}
+
+/* History */
+section.hist{margin-top:40px}
+.hist-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+h2{font-size:1.2rem;font-weight:800;margin:0;letter-spacing:-.01em}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px}
+table{border-collapse:collapse;width:100%;min-width:560px;font-variant-numeric:tabular-nums}
+th,td{padding:10px 14px;text-align:right;border-bottom:1px solid var(--line);font-size:.95rem}
+th{font-weight:600;color:var(--muted);font-size:.85rem}
+th:first-child,td:first-child{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+tr.is-today td:first-child{font-weight:800}
+tfoot td{font-weight:800;border-top:2px solid var(--line);border-bottom:0}
+td.like{color:var(--like)} td.super{color:var(--super)}
+.empty{padding:22px;color:var(--muted);text-align:center}
+
+@media (max-width:640px){
+  .tally{grid-template-columns:1fr 1fr}
+  .cell.swipe{grid-column:1 / -1;border-bottom:1px solid var(--line)}
+  .cell.like{border-left:0}
+  .keys{grid-template-columns:1fr}
+  .key{min-height:92px}
+  .hint{display:none}
+}
+@media (prefers-reduced-motion:reduce){.bump{animation:none}.key{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Swipe-Zähler</h1>
+      <div class="today" id="todayLabel"></div>
+    </div>
+    <div class="status" id="status">Speicher wird geladen …</div>
+  </header>
+
+  <div class="tally" aria-live="polite">
+    <div class="cell swipe"><div class="n" id="nSwipes">0</div><div class="l">Swipes heute</div></div>
+    <div class="cell like"><div class="n" id="nLikes">0</div><div class="l">Likes</div></div>
+    <div class="cell super"><div class="n" id="nSupers">0</div><div class="l">Super-Likes</div></div>
+  </div>
+  <div class="rates">
+    <span>Like-Quote <b id="rLike">–</b></span>
+    <span>Super-Quote <b id="rSuper">–</b></span>
+    <span>Gesamt geliked <b id="rAll">–</b></span>
+  </div>
+
+  <div class="keys">
+    <button class="key swipe" id="kSwipe" data-act="swipe">
+      <div><div class="t">Swipe</div><div class="d">Nur weitergeswiped</div></div>
+      <kbd>1</kbd>
+    </button>
+    <button class="key like" id="kLike" data-act="like">
+      <div><div class="t">Like</div><div class="d">Normales Like, zählt als Swipe</div></div>
+      <kbd>2</kbd>
+    </button>
+    <button class="key super" id="kSuper" data-act="super">
+      <div><div class="t">Super-Like</div><div class="d">Absoluter Volltreffer, zählt als Swipe</div></div>
+      <kbd>3</kbd>
+    </button>
+  </div>
+
+  <div class="tools">
+    <button class="btn" id="undoBtn" disabled>Rückgängig (Z)</button>
+    <button class="btn danger" id="resetBtn">Heute zurücksetzen</button>
+    <span class="hint">Tasten 1 · 2 · 3 zum Zählen, Z zum Rückgängigmachen</span>
+  </div>
+
+  <section class="hist">
+    <div class="hist-head">
+      <h2>Verlauf pro Tag</h2>
+      <button class="btn" id="csvBtn">Als CSV exportieren</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Datum</th><th>Swipes</th><th>Likes</th><th>Super</th><th>Like-Quote</th><th>Super-Quote</th></tr></thead>
+        <tbody id="histBody"></tbody>
+        <tfoot id="histFoot"></tfoot>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+(function(){
+  const LS_KEY = "swipe-zaehler-v1";
+  let state = { days: {} };
+  let undoStack = [];
+  let db = null, docRef = null, saveTimer = null;
+
+  const $ = id => document.getElementById(id);
+
+  // Ein "Tag" läuft von 4:00 bis 3:59 Uhr deutscher Zeit (Europe/Berlin, also CEST im Sommer, CET im Winter).
+  const TZ = "Europe/Berlin", DAY_START_HOUR = 4;
+  const tzFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", hourCycle:"h23" });
+  function dayKey(d = new Date()){
+    const p = {}; for (const x of tzFmt.formatToParts(d)) p[x.type] = x.value;
+    let y = +p.year, m = +p.month, dd = +p.day;
+    if (+p.hour < DAY_START_HOUR){
+      const prev = new Date(Date.UTC(y, m-1, dd) - 86400000);
+      y = prev.getUTCFullYear(); m = prev.getUTCMonth()+1; dd = prev.getUTCDate();
+    }
+    return `${y}-${String(m).padStart(2,"0")}-${String(dd).padStart(2,"0")}`;
+  }
+  function fmtDate(key){
+    const [y,m,d] = key.split("-").map(Number);
+    return new Date(y, m-1, d).toLocaleDateString("de-DE", { weekday:"short", day:"2-digit", month:"2-digit", year:"numeric" });
+  }
+  function pct(a,b){ return b > 0 ? (a/b*100).toFixed(1).replace(".", ",") + " %" : "–"; }
+  function today(){
+    const k = dayKey();
+    if (!state.days[k]) state.days[k] = { swipes:0, likes:0, supers:0 };
+    return state.days[k];
+  }
+  function clean(o){
+    const out = { days:{} };
+    if (o && o.days && typeof o.days === "object"){
+      for (const [k,v] of Object.entries(o.days)){
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !v) continue;
+        out.days[k] = { swipes: +v.swipes||0, likes: +v.likes||0, supers: +v.supers||0 };
+      }
+    }
+    return out;
+  }
+  function mergeMax(a,b){
+    const out = { days: { ...a.days } };
+    for (const [k,v] of Object.entries(b.days)){
+      const c = out.days[k] || { swipes:0, likes:0, supers:0 };
+      out.days[k] = { swipes: Math.max(c.swipes,v.swipes), likes: Math.max(c.likes,v.likes), supers: Math.max(c.supers,v.supers) };
+    }
+    return out;
+  }
+
+  /* ---------- persistence ---------- */
+  function saveLocal(){
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch(e){}
+  }
+  function loadLocal(){
+    try { const raw = localStorage.getItem(LS_KEY); if (raw) return clean(JSON.parse(raw)); } catch(e){}
+    return { days:{} };
+  }
+  function scheduleRemote(){
+    if (!docRef) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try { await docRef.set({ days: state.days }); setStatus("Im Konto gespeichert"); }
+      catch(e){ setStatus("Nur in diesem Browser gespeichert"); }
+    }, 700);
+  }
+  function persist(){ saveLocal(); scheduleRemote(); }
+  function setStatus(t){ $("status").textContent = t; }
+
+  async function connectDb(){
+    try {
+      if (!window.claude || !window.claude.use) { setStatus("Nur in diesem Browser gespeichert"); return; }
+      const [dbNs, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]);
+      if (!dbNs || !user) { setStatus("Nur in diesem Browser gespeichert"); return; }
+      const uid = await user.id();
+      if (!uid) { setStatus("Nur in diesem Browser gespeichert"); return; }
+      db = dbNs;
+      docRef = db.doc("data/users/" + uid + "/stats");
+      const snap = await docRef.get();
+      if (snap.exists) state = mergeMax(state, clean(snap.data()));
+      render();
+      saveLocal();
+      await docRef.set({ days: state.days });
+      setStatus("Im Konto gespeichert");
+    } catch(e){
+      docRef = null;
+      setStatus("Nur in diesem Browser gespeichert");
+    }
+  }
+
+  /* ---------- actions ---------- */
+  function act(kind){
+    const t = today();
+    t.swipes++;
+    if (kind === "like") t.likes++;
+    if (kind === "super") t.supers++;
+    undoStack.push({ day: dayKey(), kind });
+    if (undoStack.length > 200) undoStack.shift();
+    persist();
+    render(kind);
+  }
+  function undo(){
+    const last = undoStack.pop();
+    if (!last) return;
+    const d = state.days[last.day];
+    if (d){
+      d.swipes = Math.max(0, d.swipes-1);
+      if (last.kind === "like") d.likes = Math.max(0, d.likes-1);
+      if (last.kind === "super") d.supers = Math.max(0, d.supers-1);
+    }
+    persist();
+    render();
+  }
+  function resetToday(){
+    if (!confirm("Heutige Zahlen wirklich auf 0 setzen?")) return;
+    state.days[dayKey()] = { swipes:0, likes:0, supers:0 };
+    undoStack = undoStack.filter(u => u.day !== dayKey());
+    persist();
+    render();
+  }
+
+  /* ---------- render ---------- */
+  function bump(el){ el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
+  function render(kind){
+    const k = dayKey();
+    const t = state.days[k] || { swipes:0, likes:0, supers:0 };
+    { const [yy,mm,dd] = k.split("-").map(Number);
+      $("todayLabel").textContent = new Date(yy, mm-1, dd).toLocaleDateString("de-DE", { weekday:"long", day:"numeric", month:"long", year:"numeric" }) + " · neuer Tag ab 4:00 Uhr"; }
+    $("nSwipes").textContent = t.swipes;
+    $("nLikes").textContent = t.likes;
+    $("nSupers").textContent = t.supers;
+    $("rLike").textContent = pct(t.likes, t.swipes);
+    $("rSuper").textContent = pct(t.supers, t.swipes);
+    $("rAll").textContent = pct(t.likes + t.supers, t.swipes);
+    if (kind){ bump($("nSwipes")); if (kind==="like") bump($("nLikes")); if (kind==="super") bump($("nSupers")); }
+    $("undoBtn").disabled = undoStack.length === 0;
+
+    const keys = Object.keys(state.days).filter(d => { const v = state.days[d]; return v.swipes || v.likes || v.supers || d === k; }).sort().reverse();
+    const body = $("histBody"), foot = $("histFoot");
+    body.innerHTML = ""; foot.innerHTML = "";
+    const hasData = keys.some(d => state.days[d].swipes > 0);
+    if (!hasData){
+      body.innerHTML = '<tr><td colspan="6" class="empty">Noch keine Swipes. Drück 1, 2 oder 3, um loszulegen.</td></tr>';
+      return;
+    }
+    let S=0,L=0,U=0;
+    for (const d of keys){
+      const v = state.days[d]; S+=v.swipes; L+=v.likes; U+=v.supers;
+      const tr = document.createElement("tr");
+      if (d === k) tr.className = "is-today";
+      tr.innerHTML = `<td>${fmtDate(d)}${d===k?" (heute)":""}</td><td>${v.swipes}</td><td class="like">${v.likes}</td><td class="super">${v.supers}</td><td>${pct(v.likes,v.swipes)}</td><td>${pct(v.supers,v.swipes)}</td>`;
+      body.appendChild(tr);
+    }
+    const days = keys.filter(d => state.days[d].swipes > 0).length;
+    foot.innerHTML = `<tr><td>Gesamt (${days} ${days===1?"Tag":"Tage"})</td><td>${S}</td><td class="like">${L}</td><td class="super">${U}</td><td>${pct(L,S)}</td><td>${pct(U,S)}</td></tr>`;
+  }
+
+  /* ---------- CSV ---------- */
+  async function exportCsv(){
+    const rows = [["Datum","Swipes","Likes","Super-Likes","Like-Quote %","Super-Quote %"]];
+    for (const d of Object.keys(state.days).sort()){
+      const v = state.days[d];
+      if (!v.swipes) continue;
+      rows.push([d, v.swipes, v.likes, v.supers, (v.likes/v.swipes*100).toFixed(1), (v.supers/v.swipes*100).toFixed(1)]);
+    }
+    const csv = rows.map(r => r.join(";")).join("\n");
+    const filename = "swipe-statistik-" + dayKey() + ".csv";
+    try {
+      const dl = window.claude && window.claude.use ? await window.claude.use("downloads") : null;
+      if (dl){ await dl.save({ filename, data: "\uFEFF" + csv }); return; }
+    } catch(e){ if (e && e.code && e.code !== "not_granted") return; }
+    if (!window.claude){
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type:"text/csv;charset=utf-8" }));
+      a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      return;
+    }
+    try { await navigator.clipboard.writeText(csv); alert("Download hier nicht verfügbar – CSV wurde in die Zwischenablage kopiert."); }
+    catch(e){ alert("Export nicht möglich."); }
+  }
+
+  /* ---------- wiring ---------- */
+  document.querySelectorAll(".key").forEach(b => b.addEventListener("click", () => act(b.dataset.act)));
+  $("undoBtn").addEventListener("click", undo);
+  $("resetBtn").addEventListener("click", resetToday);
+  $("csvBtn").addEventListener("click", exportCsv);
+
+  const keyMap = { "1":"kSwipe", "2":"kLike", "3":"kSuper" };
+  document.addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    const id = keyMap[e.key];
+    if (id){ e.preventDefault(); const b=$(id); b.classList.add("pressed"); setTimeout(()=>b.classList.remove("pressed"),90); act(b.dataset.act); }
+    else if (e.key === "z" || e.key === "Z"){ e.preventDefault(); undo(); }
+  });
+
+  // Tageswechsel um Mitternacht erkennen
+  let lastDay = dayKey();
+  setInterval(() => { if (dayKey() !== lastDay){ lastDay = dayKey(); undoStack = []; render(); } }, 30000);
+
+  state = loadLocal();
+  render();
+  connectDb();
+})();
+</script>
+</body>
+</html>
